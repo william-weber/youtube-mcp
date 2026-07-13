@@ -9,6 +9,12 @@ playlists on your own account.
   duration, URL
 - `create_playlist(title, video_ids[], description?)` — creates a **private**
   playlist and adds the videos in order
+- `search_playlists(query?)` — lists your own playlists (optionally filtered
+  by title substring) so later sessions can find one by ID
+- `add_to_playlist(playlist_id, video_ids[])` — appends videos to an existing
+  playlist
+- `remove_video(playlist_id, video_id)` — removes all occurrences of a video
+  from a playlist
 
 Auth is OAuth 2.0 (Desktop-app client): a one-time browser consent flow stores
 a refresh token at `~/.config/yt-playlist-mcp/token.json` (mode 600); after
@@ -83,6 +89,9 @@ The YouTube Data API grants 10,000 units/day by default:
 
 - `search_youtube`: ~101 units per call (search 100 + videos.list 1)
 - `create_playlist`: 50 units + 50 per video added
+- `add_to_playlist`: 50 units per video
+- `remove_video`: ~51 units (lookup 1 + delete 50 per occurrence)
+- `search_playlists`: 1 unit per 50 playlists
 
 So roughly 90 searches/day, or fewer if you create large playlists. Quota
 errors come back as tool errors mentioning `quotaExceeded`.

@@ -42,5 +42,8 @@ into `node dist/index.js`.
 - `search.list` doesn't return durations — `searchVideos` makes a second batched
   `videos.list` call. Live streams report duration `P0D` → rendered as `live`.
 - Quota: 10k units/day; each search costs ~101 units, playlist creation 50 + 50/video.
+- Playlist writes are eventually consistent: reads/inserts right after a create or
+  insert can 404, abort, or return empty for a few seconds — hence `withRetry` and
+  the empty-lookup retry loop in `src/youtube.ts`. Don't remove them.
 - Claude Desktop launches servers with an unpredictable cwd — all paths in code and
   in `claude_desktop_config.json` must be absolute.

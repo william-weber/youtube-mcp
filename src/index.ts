@@ -2,7 +2,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { createPlaylist, searchVideos } from "./youtube.js";
+import {
+  addToPlaylist,
+  createPlaylist,
+  removeVideo,
+  searchPlaylists,
+  searchVideos,
+} from "./youtube.js";
 
 const server = new McpServer({ name: "yt-playlist-mcp", version: "0.1.0" });
 
@@ -62,6 +68,80 @@ server.registerTool(
   async ({ title, video_ids, description }) => {
     try {
       const result = await createPlaylist(title, video_ids, description);
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
+  "search_playlists",
+  {
+    title: "Search my playlists",
+    description:
+      "List the authorized account's own playlists, optionally filtered by a title substring. Use this to find an existing playlist's ID before adding or removing videos.",
+    inputSchema: {
+      query: z
+        .string()
+        .optional()
+        .describe("Case-insensitive title filter; omit to list all playlists"),
+    },
+  },
+  async ({ query }) => {
+    try {
+      const results = await searchPlaylists(query);
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(results, null, 2) }],
+      };
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
+  "add_to_playlist",
+  {
+    title: "Add videos to a playlist",
+    description:
+      "Add videos to an existing playlist owned by the authorized account, in order. Returns which videos were added or failed.",
+    inputSchema: {
+      playlist_id: z.string().min(1).describe("Playlist ID (from search_playlists or create_playlist)"),
+      video_ids: z
+        .array(z.string().min(1))
+        .min(1)
+        .describe("YouTube video IDs to add, in order"),
+    },
+  },
+  async ({ playlist_id, video_ids }) => {
+    try {
+      const result = await addToPlaylist(playlist_id, video_ids);
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
+  "remove_video",
+  {
+    title: "Remove a video from a playlist",
+    description:
+      "Remove all occurrences of a video from a playlist owned by the authorized account.",
+    inputSchema: {
+      playlist_id: z.string().min(1).describe("Playlist ID"),
+      video_id: z.string().min(1).describe("YouTube video ID to remove"),
+    },
+  },
+  async ({ playlist_id, video_id }) => {
+    try {
+      const result = await removeVideo(playlist_id, video_id);
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
       };

@@ -16,6 +16,14 @@ export interface PlaylistResult {
   failed: { id: string; reason: string }[];
 }
 
+export interface PlaylistInfo {
+  id: string;
+  title: string;
+  itemCount: number;
+  privacy: string;
+  url: string;
+}
+
 let yt: youtube_v3.Youtube | undefined;
 
 async function getClient(): Promise<youtube_v3.Youtube> {
@@ -76,6 +84,55 @@ export async function searchVideos(
   });
 }
 
+// Newly created playlists are eventually consistent: follow-up calls can get
+// 404 playlistNotFound or aborted requests for a few seconds. Retrying may
+// rarely double-add a video if an "aborted" insert actually landed — an
+// acceptable trade-off for playlists.
+const TRANSIENT = /playlistNotFound|aborted|ECONNRESET|ETIMEDOUT|socket hang up/i;
+
+async function withRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (attempt >= attempts || !TRANSIENT.test(msg)) throw err;
+      await new Promise((r) => setTimeout(r, 1500 * attempt));
+    }
+  }
+}
+
+async function insertVideos(
+  youtube: youtube_v3.Youtube,
+  playlistId: string,
+  videoIds: string[]
+): Promise<Pick<PlaylistResult, "added" | "failed">> {
+  const added: string[] = [];
+  const failed: { id: string; reason: string }[] = [];
+  for (const videoId of videoIds) {
+    try {
+      await withRetry(() =>
+        youtube.playlistItems.insert({
+          part: ["snippet"],
+          requestBody: {
+            snippet: {
+              playlistId,
+              resourceId: { kind: "youtube#video", videoId },
+            },
+          },
+        })
+      );
+      added.push(videoId);
+    } catch (err) {
+      failed.push({
+        id: videoId,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return { added, failed };
+}
+
 export async function createPlaylist(
   title: string,
   videoIds: string[],
@@ -95,32 +152,90 @@ export async function createPlaylist(
     throw new Error("playlists.insert returned no playlist id");
   }
 
-  const added: string[] = [];
-  const failed: { id: string; reason: string }[] = [];
-  for (const videoId of videoIds) {
-    try {
-      await youtube.playlistItems.insert({
-        part: ["snippet"],
-        requestBody: {
-          snippet: {
-            playlistId,
-            resourceId: { kind: "youtube#video", videoId },
-          },
-        },
-      });
-      added.push(videoId);
-    } catch (err) {
-      failed.push({
-        id: videoId,
-        reason: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
   return {
     playlistId,
     url: `https://www.youtube.com/playlist?list=${playlistId}`,
-    added,
-    failed,
+    ...(await insertVideos(youtube, playlistId, videoIds)),
   };
+}
+
+export async function addToPlaylist(
+  playlistId: string,
+  videoIds: string[]
+): Promise<PlaylistResult> {
+  const youtube = await getClient();
+  return {
+    playlistId,
+    url: `https://www.youtube.com/playlist?list=${playlistId}`,
+    ...(await insertVideos(youtube, playlistId, videoIds)),
+  };
+}
+
+/**
+ * Lists the authorized account's own playlists (search.list can't scope to
+ * "mine", so filtering by title happens client-side).
+ */
+export async function searchPlaylists(query?: string): Promise<PlaylistInfo[]> {
+  const youtube = await getClient();
+  const playlists: PlaylistInfo[] = [];
+  let pageToken: string | undefined;
+  do {
+    const res = await youtube.playlists.list({
+      part: ["snippet", "contentDetails", "status"],
+      mine: true,
+      maxResults: 50,
+      pageToken,
+    });
+    for (const p of res.data.items ?? []) {
+      if (!p.id) continue;
+      playlists.push({
+        id: p.id,
+        title: p.snippet?.title ?? "(untitled)",
+        itemCount: p.contentDetails?.itemCount ?? 0,
+        privacy: p.status?.privacyStatus ?? "unknown",
+        url: `https://www.youtube.com/playlist?list=${p.id}`,
+      });
+    }
+    pageToken = res.data.nextPageToken ?? undefined;
+  } while (pageToken && playlists.length < 200);
+
+  const q = query?.trim().toLowerCase();
+  if (!q) return playlists;
+  return playlists.filter((p) => p.title.toLowerCase().includes(q));
+}
+
+/**
+ * Removes every occurrence of a video from a playlist. The API deletes
+ * playlist *items*, so we first resolve the video ID to its item IDs.
+ */
+export async function removeVideo(
+  playlistId: string,
+  videoId: string
+): Promise<{ playlistId: string; videoId: string; removed: number }> {
+  const youtube = await getClient();
+  // An empty result may also be consistency lag (video added moments ago),
+  // so retry empty lookups before concluding the video isn't there.
+  let itemIds: string[] = [];
+  for (let attempt = 1; attempt <= 3 && itemIds.length === 0; attempt++) {
+    if (attempt > 1) await new Promise((r) => setTimeout(r, 1500 * attempt));
+    const items = await withRetry(() =>
+      youtube.playlistItems.list({
+        part: ["id"],
+        playlistId,
+        videoId,
+        maxResults: 50,
+      })
+    );
+    itemIds = (items.data.items ?? [])
+      .map((item) => item.id)
+      .filter((id): id is string => Boolean(id));
+  }
+
+  if (itemIds.length === 0) {
+    throw new Error(`Video ${videoId} not found in playlist ${playlistId}`);
+  }
+  for (const id of itemIds) {
+    await youtube.playlistItems.delete({ id });
+  }
+  return { playlistId, videoId, removed: itemIds.length };
 }
