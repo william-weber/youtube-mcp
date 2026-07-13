@@ -8,6 +8,7 @@ import {
   deletePlaylist,
   listPlaylistItems,
   removeVideo,
+  reorderPlaylist,
   searchPlaylists,
   searchVideos,
 } from "./youtube.js";
@@ -166,6 +167,32 @@ server.registerTool(
   async ({ playlist_id, video_id }) => {
     try {
       const result = await removeVideo(playlist_id, video_id);
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
+  "reorder_playlist",
+  {
+    title: "Reorder a playlist",
+    description:
+      "Reorder a playlist owned by the authorized account: the given videos are placed first, in the given order; videos not listed keep their relative order after them. Pass the full desired order to sort an entire playlist. Fails without changes if any given video is not in the playlist.",
+    inputSchema: {
+      playlist_id: z.string().min(1).describe("Playlist ID"),
+      video_ids: z
+        .array(z.string().min(1))
+        .min(1)
+        .describe("Video IDs in desired order (may be a subset; they move to the top)"),
+    },
+  },
+  async ({ playlist_id, video_ids }) => {
+    try {
+      const result = await reorderPlaylist(playlist_id, video_ids);
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
       };

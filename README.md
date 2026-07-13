@@ -16,6 +16,8 @@ playlists on your own account.
 - `list_playlist_items(playlist_id)` — lists a playlist's videos in order
 - `remove_video(playlist_id, video_id)` — removes all occurrences of a video
   from a playlist
+- `reorder_playlist(playlist_id, video_ids[])` — puts the given videos first,
+  in order; pass the full list to sort a whole playlist
 - `delete_playlist(playlist_id)` — permanently deletes a whole playlist
 
 Auth is OAuth 2.0 (Desktop-app client): a one-time browser consent flow stores
@@ -96,6 +98,8 @@ The YouTube Data API grants 10,000 units/day by default:
 - `search_playlists`: 1 unit per 50 playlists
 - `list_playlist_items`: 1 unit per 50 videos
 - `delete_playlist`: ~51 units
+- `reorder_playlist`: 50 units per video actually moved (already-in-place
+  videos cost nothing)
 
 So roughly 90 searches/day, or fewer if you create large playlists. Quota
 errors come back as tool errors mentioning `quotaExceeded`.

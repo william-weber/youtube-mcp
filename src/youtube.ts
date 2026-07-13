@@ -244,6 +244,87 @@ export async function listPlaylistItems(
   return items;
 }
 
+export interface ReorderResult {
+  playlistId: string;
+  moves: number;
+  order: string[];
+}
+
+/**
+ * Reorders a playlist so the given videos appear first, in the given order;
+ * unmentioned videos keep their relative order after them. Each API position
+ * update costs 50 quota units, so we simulate the list and only move items
+ * that are out of place instead of rewriting every position.
+ */
+export async function reorderPlaylist(
+  playlistId: string,
+  videoIds: string[]
+): Promise<ReorderResult> {
+  const youtube = await getClient();
+  const items: { itemId: string; videoId: string }[] = [];
+  let pageToken: string | undefined;
+  do {
+    const res = await withRetry(() =>
+      youtube.playlistItems.list({
+        part: ["snippet"],
+        playlistId,
+        maxResults: 50,
+        pageToken,
+      })
+    );
+    for (const item of res.data.items ?? []) {
+      const videoId = item.snippet?.resourceId?.videoId;
+      if (item.id && videoId) items.push({ itemId: item.id, videoId });
+    }
+    pageToken = res.data.nextPageToken ?? undefined;
+  } while (pageToken && items.length < 500);
+
+  // Target order: requested videos first (consuming duplicates in order of
+  // appearance), then everything else in its current relative order.
+  const pool = [...items];
+  const target: typeof items = [];
+  const missing: string[] = [];
+  for (const videoId of videoIds) {
+    const idx = pool.findIndex((p) => p.videoId === videoId);
+    if (idx === -1) {
+      missing.push(videoId);
+      continue;
+    }
+    target.push(...pool.splice(idx, 1));
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `Not in playlist ${playlistId}: ${missing.join(", ")} — no changes made`
+    );
+  }
+  target.push(...pool);
+
+  const current = [...items];
+  let moves = 0;
+  for (let i = 0; i < target.length; i++) {
+    if (current[i].itemId === target[i].itemId) continue;
+    const j = current.findIndex((c) => c.itemId === target[i].itemId);
+    const [moved] = current.splice(j, 1);
+    current.splice(i, 0, moved);
+    await withRetry(() =>
+      youtube.playlistItems.update({
+        part: ["snippet"],
+        requestBody: {
+          id: moved.itemId,
+          snippet: {
+            playlistId,
+            resourceId: { kind: "youtube#video", videoId: moved.videoId },
+            position: i,
+          },
+        },
+      })
+    );
+    moves++;
+  }
+
+  return { playlistId, moves, order: current.map((c) => c.videoId) };
+}
+
 /** Permanently deletes a playlist. Title lookup is best-effort, for the confirmation message. */
 export async function deletePlaylist(
   playlistId: string
