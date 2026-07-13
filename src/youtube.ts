@@ -204,6 +204,59 @@ export async function searchPlaylists(query?: string): Promise<PlaylistInfo[]> {
   return playlists.filter((p) => p.title.toLowerCase().includes(q));
 }
 
+export interface PlaylistItem {
+  videoId: string;
+  title: string;
+  channel: string;
+  position: number;
+  url: string;
+}
+
+export async function listPlaylistItems(
+  playlistId: string
+): Promise<PlaylistItem[]> {
+  const youtube = await getClient();
+  const items: PlaylistItem[] = [];
+  let pageToken: string | undefined;
+  do {
+    const res = await withRetry(() =>
+      youtube.playlistItems.list({
+        part: ["snippet"],
+        playlistId,
+        maxResults: 50,
+        pageToken,
+      })
+    );
+    for (const item of res.data.items ?? []) {
+      const videoId = item.snippet?.resourceId?.videoId;
+      if (!videoId) continue;
+      items.push({
+        videoId,
+        // deleted/private videos show up as "Deleted video"/"Private video"
+        title: item.snippet?.title ?? "(unknown title)",
+        channel: item.snippet?.videoOwnerChannelTitle ?? "(unknown channel)",
+        position: item.snippet?.position ?? items.length,
+        url: `https://www.youtube.com/watch?v=${videoId}`,
+      });
+    }
+    pageToken = res.data.nextPageToken ?? undefined;
+  } while (pageToken && items.length < 500);
+  return items;
+}
+
+/** Permanently deletes a playlist. Title lookup is best-effort, for the confirmation message. */
+export async function deletePlaylist(
+  playlistId: string
+): Promise<{ playlistId: string; title: string | null; deleted: true }> {
+  const youtube = await getClient();
+  const res = await withRetry(() =>
+    youtube.playlists.list({ part: ["snippet"], id: [playlistId], maxResults: 1 })
+  );
+  const title = res.data.items?.[0]?.snippet?.title ?? null;
+  await withRetry(() => youtube.playlists.delete({ id: playlistId }));
+  return { playlistId, title, deleted: true };
+}
+
 /**
  * Removes every occurrence of a video from a playlist. The API deletes
  * playlist *items*, so we first resolve the video ID to its item IDs.

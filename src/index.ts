@@ -5,6 +5,8 @@ import { z } from "zod";
 import {
   addToPlaylist,
   createPlaylist,
+  deletePlaylist,
+  listPlaylistItems,
   removeVideo,
   searchPlaylists,
   searchVideos,
@@ -129,6 +131,28 @@ server.registerTool(
 );
 
 server.registerTool(
+  "list_playlist_items",
+  {
+    title: "List playlist contents",
+    description:
+      "List the videos in a playlist, in order, with video ID, title, channel, and position. Works on the authorized account's playlists.",
+    inputSchema: {
+      playlist_id: z.string().min(1).describe("Playlist ID (from search_playlists or create_playlist)"),
+    },
+  },
+  async ({ playlist_id }) => {
+    try {
+      const results = await listPlaylistItems(playlist_id);
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(results, null, 2) }],
+      };
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
   "remove_video",
   {
     title: "Remove a video from a playlist",
@@ -142,6 +166,28 @@ server.registerTool(
   async ({ playlist_id, video_id }) => {
     try {
       const result = await removeVideo(playlist_id, video_id);
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
+server.registerTool(
+  "delete_playlist",
+  {
+    title: "Delete a playlist",
+    description:
+      "Permanently delete an entire playlist owned by the authorized account. This cannot be undone — confirm with the user before calling. To remove a single video instead, use remove_video.",
+    inputSchema: {
+      playlist_id: z.string().min(1).describe("Playlist ID to delete"),
+    },
+  },
+  async ({ playlist_id }) => {
+    try {
+      const result = await deletePlaylist(playlist_id);
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
       };
